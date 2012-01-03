@@ -38,6 +38,7 @@ class Chosen extends AbstractChosen
     @form_field.hide().insert({ after: base_template })
     @container = $(@container_id)
     @container.addClassName( "chzn-container-" + (if @is_multiple then "multi" else "single") )
+    @container.addClassName "chzn-container-single-nosearch" if not @is_multiple and @form_field.options.length <= @disable_search_threshold
     @dropdown = @container.down('div.chzn-drop')
     
     dd_top = @container.getHeight()
@@ -155,6 +156,7 @@ class Chosen extends AbstractChosen
       this.close_field()
 
   results_build: ->
+    startTime = new Date()
     @parsing = true
     @results_data = root.SelectParser.select_to_array @form_field
 
@@ -163,10 +165,6 @@ class Chosen extends AbstractChosen
       @choices = 0
     else if not @is_multiple
       @selected_item.down("span").update(@default_text)
-      if @form_field.options.length <= @disable_search_threshold
-        @container.addClassName "chzn-container-single-nosearch"
-      else
-        @container.removeClassName "chzn-container-single-nosearch"
 
     content = ''
     for data in @results_data
@@ -342,6 +340,25 @@ class Chosen extends AbstractChosen
 
       @form_field.simulate("change") if typeof Event.simulate is 'function'
       this.search_field_scale()
+    else if @options.allow_option_creation
+      new_option = @search_field.value
+      return unless new_option
+      if @allow_creation(new_option)
+        @form_field.insert(Element('option', {selected: true, value: new_option}).update(new_option))
+        @results_update_field(evt)
+      @form_field.simulate("change") if typeof Event.simulate is 'function'
+      @search_field.value = ""
+      @results_hide()
+
+  allow_creation: (new_option) ->
+    if @is_multiple
+      matches = @search_choices.getElementsBySelector("li.search-choice span").select (el) ->
+        console.debug(el)
+        el.innerHTML.toLowerCase() == new_option.toLowerCase()
+      console.debug(matches)
+      !matches.length
+    else
+      @selected_item.getElementsBySelector('span').innerHTML.toLowerCase() != new_option.toLowerCase()
 
   result_activate: (el) ->
     el.addClassName("active-result")
@@ -367,13 +384,16 @@ class Chosen extends AbstractChosen
     @selected_item.down("span").insert { after: "<abbr class=\"search-choice-close\"></abbr>" } if @allow_single_deselect and not @selected_item.down("abbr")
 
   winnow_results: ->
+    startTime = new Date()
     this.no_results_clear()
 
     results = 0
 
-    searchText = if @search_field.value is @default_text then "" else @search_field.value.strip().escapeHTML()
-    regex = new RegExp('^' + searchText.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, "\\$&"), 'i')
-    zregex = new RegExp(searchText.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, "\\$&"), 'i')
+    searchText = if @search_field.val() is @default_text then "" else $('<div/>').text($.trim(@search_field.val())).html()
+    textToSearch = searchText.replace(/[\-\[\]\{\}\(\)\*\+\?\.,\\\^\$\|\#\s]/g, "\\$&")
+    regex = new RegExp('^' + textToSearch, 'i')
+    zregex = new RegExp(textToSearch, 'i')
+    fregex = new RegExp("^" + textToSearch + "$", 'i')
 
     for option in @results_data
       if not option.disabled and not option.empty
@@ -383,7 +403,11 @@ class Chosen extends AbstractChosen
           found = false
           result_id = option.dom_id
           
-          if regex.test option.html
+          if @options.allow_option_creation && searchText && fregex.test(option.html)
+            found = true
+            results += 1
+            @result_do_highlight($(option.dom_id))
+          else if regex.test option.html
             found = true
             results += 1
           else if option.html.indexOf(" ") >= 0 or option.html.indexOf("[") == 0
@@ -407,14 +431,15 @@ class Chosen extends AbstractChosen
 
             this.result_activate $(result_id)
 
-            $(@results_data[option.group_array_index].dom_id).setStyle({display: 'list-item'}) if option.group_array_index?
+            $(@results_data[option.group_array_index].dom_id).show() if option.group_array_index?
           else
             this.result_clear_highlight() if $(result_id) is @result_highlight
             this.result_deactivate $(result_id)
 
     if results < 1 and searchText.length
       this.no_results(searchText)
-    else
+      @results_hide() if @options.allow_option_creation && @is_multiple
+    else if not @options.allow_option_creation
       this.winnow_results_set_highlight()
 
   winnow_results_clear: ->
@@ -439,6 +464,7 @@ class Chosen extends AbstractChosen
       this.result_do_highlight do_high if do_high?
   
   no_results: (terms) ->
+    return if !@is_multiple && @options.allow_option_creation
     @search_results.insert @no_results_temp.evaluate( terms: terms )
   
   no_results_clear: ->
